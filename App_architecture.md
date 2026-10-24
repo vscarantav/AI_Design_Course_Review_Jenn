@@ -8,7 +8,7 @@ The user-facing interaction is intentionally simple:
 
 > Evaluate course PUBH 132.
 
-The controller agent resolves the package and its required course workbook in the open folder, runs deterministic preprocessing, performs the bounded analytical tasks, validates the findings, and returns the completed workbook plus the audit report.
+The controller agent resolves the package and its required course workbook in the open folder, runs deterministic preprocessing, performs the bounded analytical tasks, validates the findings, and returns the completed workbook plus the Word audit report.
 
 `course_review_agent_instructions.md` is the authoritative review rubric. This file controls orchestration, safety, context use, and artifacts. If the two files conflict about review judgment, follow the rubric; if they conflict about executing local code or handling untrusted files, follow the safer instruction.
 
@@ -21,12 +21,13 @@ The controller agent resolves the package and its required course workbook in th
 5. **Code before analysis.** If a fact can be extracted, counted, compared, converted, or validated deterministically, use the local workers. Agent judgment is reserved for meaning, quality, appropriateness, alignment, and recommendations.
 6. **Evidence before status.** A `Verified` finding must cite direct evidence. A non-Verified/non-Exempt finding must have a specific recommendation.
 7. **Do not silently guess.** Missing references become Low-confidence findings or “Needs from requester,” following the baseline.
+8. **Quality model default.** Trusted Codex clients should load `.codex/config.toml`, which selects GPT-6.1 Sol with high reasoning for new review threads. An explicit session or CLI selection has higher precedence and cannot be overridden by repository files. If Sol is unavailable or retired, use the current OpenAI-documented balanced general-purpose model for complex coding and professional work at high reasoning, and disclose the fallback before review preparation.
 
 ## 3. Architecture
 
 ### 3.1 Controller
 
-`Invoke-CourseReview.ps1` is the command-line entry point. `src/CourseReviewer/Controller.psm1` owns the run lifecycle:
+`course_review.py` is the cross-platform command-line entry point. `src/course_reviewer/controller.py` owns the run lifecycle:
 
 - find the requested course;
 - create an isolated, timestamped run;
@@ -44,14 +45,14 @@ The controller does not make course-quality judgments. The ChatGPT controller ag
 
 | Worker | Responsibility | Expected behavior |
 |---|---|---|
-| `ArchiveWorker.psm1` | Safe ZIP/IMSCC/OOXML extraction and ZIP creation | Reject traversal, symlinks, oversized archives, suspicious compression, and path collisions. Normalize Windows-invalid filename characters consistently. |
-| `ImsccWorker.psm1` | Canvas manifest, course settings, modules, items, settings, URLs, and embedded XML text | Connect module `identifierref` values to manifest resources; preserve package-relative evidence paths; separate published/student-facing from instructor-facing material. |
-| `HtmlScanWorker.psm1` | HTML text extraction and code-checkable accessibility/language signals | Count missing alt text, heading jumps, headerless tables, vague links, inline colors, long sentences, URLs, and readability support metrics. These signals support—but do not replace—agent judgment. |
-| `OfficeWorker.psm1` | OOXML expansion, normalized XML views, and rebuilding | Expand every `.docx`/`.xlsx` into its complete XML package plus `normalized.xml`. Preserve all package parts. Rebuild only into run output, never over the source. |
-| `WorkbookWorker.psm1` | Required workbook resolution and Design Review mapping | Match the sidecar course workbook, require the exact `Design Review` tab, generate `evidence/design_review_contract.json`, and write validated findings into the output workbook without overwriting human-note columns. |
-| `DeterministicChecksWorker.psm1` | Cross-item counts and rule checks | Compute due-day patterns, manually graded item counts, attempt-limit exceptions, discussion due/until mismatches, module gates, accessibility totals, large media, and documents needing manual accessibility review. |
-| `PacketWorker.psm1` | Rubric parsing and bounded task creation | Parse all 38 baseline criteria, assign stable IDs to WWO criteria, and create one task per category containing only the relevant rubric text and evidence index. |
-| `ValidationWorker.psm1` | Finding contract enforcement and report assembly | Refuse completion when a criterion is missing, a status/confidence is invalid, Verified lacks evidence, or a gap lacks a recommendation. |
+| `archive.py` | Safe ZIP/IMSCC/OOXML extraction and ZIP creation | Reject traversal, symlinks, oversized archives, and suspicious compression. Safely disambiguate and record case-only IMSCC filename collisions; reject Office-package collisions. Normalize Windows-invalid filename characters consistently. |
+| `imscc.py` | Canvas manifest, course settings, modules, items, settings, URLs, and embedded XML text | Connect module `identifierref` values to manifest resources; preserve package-relative evidence paths; separate published/student-facing from instructor-facing material. |
+| `html_scan.py` | HTML text extraction and code-checkable accessibility/language signals | Count missing alt text, heading jumps, headerless tables, vague links, inline colors, long sentences, URLs, and readability support metrics. These signals support—but do not replace—agent judgment. |
+| `office.py` | OOXML expansion, normalized XML views, and rebuilding | Expand every `.docx`/`.xlsx` into its complete XML package plus `normalized.xml`. Preserve all package parts. Rebuild only into run output, never over the source. |
+| `workbook.py` | Required workbook resolution and Design Review mapping | Match the sidecar course workbook, require the exact `Design Review` tab, generate `evidence/design_review_contract.json`, and write validated findings into the output workbook without overwriting human-note columns. |
+| `checks.py` | Cross-item counts and rule checks | Compute due-day patterns, manually graded item counts, attempt-limit exceptions, discussion due/until mismatches, module gates, accessibility totals, large media, and documents needing manual accessibility review. |
+| `packets.py` | Rubric parsing and bounded task creation | Parse all 38 baseline criteria, assign stable IDs to WWO criteria, and create one task per category containing only the relevant rubric text and evidence index. |
+| `validation.py` | Finding contract enforcement and report assembly | Refuse completion when a criterion is missing, a status/confidence is invalid, Verified lacks evidence, or a gap lacks a recommendation. |
 
 ### 3.3 Analytical workers
 
@@ -77,7 +78,7 @@ These rules exist to protect the user's ChatGPT token allowance.
 - Do not load the entire IMSCC, workbook XML, or baseline rubric into the conversation.
 - Run `prepare` first. Read `run.json`, `NEXT_STEPS.md`, and the compact digest.
 - Use `evidence/design_review_contract.json` for scorecard cell mappings. Do not rediscover or infer the workbook schema in agent context.
-- Treat generated JSON/XML as an on-disk database. Search it with `rg`/PowerShell and open only relevant excerpts.
+- Treat generated JSON/XML as an on-disk database. Search it with `rg` or another platform-native text search and open only relevant excerpts.
 - Do not duplicate large evidence in commentary or worker messages. Pass file paths and search targets.
 - Keep orchestration commentary brief: current phase, important exception, and output path.
 - Reuse code-generated counts. Do not ask an agent to recount items, dates, links, rubrics, or cells.
@@ -107,8 +108,8 @@ These rules exist to protect the user's ChatGPT token allowance.
 
 From the workspace root, run:
 
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\Invoke-CourseReview.ps1 prepare "COURSE X"
+```text
+python course_review.py prepare "COURSE X"
 ```
 
 Expected behavior:
@@ -141,8 +142,8 @@ The syllabus, Teaching Notes, Setup Notes, Course Map, and Workload content must
 
 Ask the controller for the next incomplete packet:
 
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\Invoke-CourseReview.ps1 next "<run-path>"
+```text
+python course_review.py next "<run-path>"
 ```
 
 Process only the returned task file, write its findings, and repeat `next`. This makes interrupted reviews safely resumable. A worker writes `<run>/findings/<criterion-id>.json` with this exact shape:
@@ -179,8 +180,8 @@ Avoid simultaneous writes to those shared appendices. Workers should return prop
 
 Run:
 
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\Invoke-CourseReview.ps1 validate "<run-path>"
+```text
+python course_review.py validate "<run-path>"
 ```
 
 Expected behavior:
@@ -197,13 +198,13 @@ Repair validation errors by revisiting only the relevant packet/evidence.
 
 After validation succeeds, run:
 
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\Invoke-CourseReview.ps1 finalize "<run-path>"
+```text
+python course_review.py finalize "<run-path>"
 ```
 
 Expected behavior:
 
-- write `output/course_review.md` in rubric order;
+- write `output/course_review.docx` as the primary formatted audit report and `output/course_review.md` as a secondary machine-readable audit, both in rubric order;
 - write mapped statuses to the output workbook's `Design Review` Status cells;
 - add concise rationales in a new `Automated Reviewer Notes` column while preserving existing reviewer/designer notes and legacy Check cells;
 - leave `Unable to Verify` Status cells unchanged and explain that result in the automated note and audit;
@@ -234,6 +235,7 @@ If validation fails, `finalize` must not create a report or claim completion.
   tasks/                      # packet worker output
   findings/                   # analytical worker output
   output/
+    course_review.docx
     course_review.md
     workbook_update_summary.json
     rebuilt_office/
@@ -307,25 +309,25 @@ Analytical progress is measured by finding-file count and shown by the `status` 
 
 ## 10. Verification commands
 
-```powershell
+```text
 # List discoverable courses
-powershell -NoProfile -ExecutionPolicy Bypass -File .\Invoke-CourseReview.ps1 list
+python course_review.py list
 
 # Show newest run status
-powershell -NoProfile -ExecutionPolicy Bypass -File .\Invoke-CourseReview.ps1 status
+python course_review.py status
 
 # Show the next incomplete analytical packet
-powershell -NoProfile -ExecutionPolicy Bypass -File .\Invoke-CourseReview.ps1 next
+python course_review.py next
 
 # Run dependency-free unit tests
-powershell -NoProfile -ExecutionPolicy Bypass -File .\tests\Run-Tests.ps1
+python -m unittest discover -s tests -v
 ```
 
 Before handing a completed review to the user, confirm:
 
 - the run says `complete`;
 - validation says `38/38`;
-- `output/course_review.md` exists;
+- `output/course_review.docx` and `output/course_review.md` exist;
 - `output/workbook_update_summary.json` identifies all mapped and unmapped criteria;
 - every required criterion below Verified/Exempt is highlighted as a priority;
 - source hashes/files remain unchanged;

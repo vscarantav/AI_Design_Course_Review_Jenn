@@ -1,0 +1,6 @@
+#:schema https://developers.openai.com/codex/config-schema.json
+
+# Defaults for new trusted-project threads. Explicit session and CLI choices
+# have higher precedence and cannot be overridden by this repository.
+model = "gpt-6.1-sol"
+model_reasoning_effort = "high"

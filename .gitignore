@@ -1,2 +1,5 @@
 .course-review/
 *.imscc
+.venv/
+__pycache__/
+*.py[cod]
